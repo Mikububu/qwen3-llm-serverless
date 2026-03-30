@@ -7,8 +7,8 @@ import time
 import runpod
 from vllm import LLM, SamplingParams
 
-# Model path: either HuggingFace ID or local path on network volume
-MODEL_ID = os.environ.get("MODEL_ID", "/runpod-volume/abliterated-awq-int4")
+# Model: downloads from HuggingFace on cold start, RunPod caches on host
+MODEL_ID = os.environ.get("MODEL_ID", "forbiddenmichael/Qwen3-30B-A3B-abliterated-erotic-AWQ-Int4")
 MAX_MODEL_LEN = int(os.environ.get("MAX_MODEL_LEN", "32768"))
 GPU_MEM_UTIL = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.92"))
 QUANTIZATION = os.environ.get("QUANTIZATION", "awq")
