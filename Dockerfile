@@ -1,13 +1,9 @@
-FROM runpod/pytorch:2.6.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM vllm/vllm-openai:v0.18.0
 
 WORKDIR /app
 
-# Install vLLM 0.18.0 (required for GPTQ-Marlin MoE on Qwen3)
-# Pin transformers to avoid Python 3.11 dataclass incompatibility
-RUN pip install --no-cache-dir \
-    vllm==0.18.0 \
-    runpod \
-    huggingface_hub
+# Add RunPod handler
+RUN pip install --no-cache-dir runpod
 
 COPY handler.py .
 
