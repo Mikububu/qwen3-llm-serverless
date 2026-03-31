@@ -1,10 +1,52 @@
-FROM runpod/worker-v1-vllm:v2.14.0
+# ── Build from the same base as runpod/worker-v1-vllm:v2.14.0 ──────────────
+# but swap vLLM 0.16.0 → 0.18.0 for AWQ MoE (Qwen3-30B-A3B) support.
+#
+# WHY the old custom image crashed:
+#   handler.py called `LLM(model=...)` at module level, which blocks Python
+#   for minutes while downloading / loading the model. That means
+#   `runpod.serverless.start()` never executes, the heartbeat ping never
+#   starts, and RunPod marks the worker "unhealthy" after ~60 s.
+#
+#   The official worker-vllm uses AsyncLLMEngine (non-blocking) and calls
+#   `runpod.serverless.start()` immediately so the heartbeat fires first.
+# ────────────────────────────────────────────────────────────────────────────
 
-# Upgrade vLLM to 0.18.0 for AWQ MoE support (v2.14.0 ships 0.16.0)
-RUN pip install --no-cache-dir --upgrade vllm==0.18.0
+FROM nvidia/cuda:12.9.1-base-ubuntu22.04
 
-# Model and config — the base image's handler reads these env vars
-ENV MODEL_NAME=forbiddenmichael/Qwen3-30B-A3B-abliterated-erotic-AWQ-Int4
+# ── System deps ─────────────────────────────────────────────────────────────
+RUN apt-get update -y && \
+    apt-get install -y python3-pip git && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN ldconfig /usr/local/cuda-12.9/compat/
+
+# ── vLLM 0.18.0 (the whole point) ──────────────────────────────────────────
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install "vllm==0.18.0" --extra-index-url https://download.pytorch.org/whl/cu129
+
+# ── Python deps (mirrors worker-vllm v2.14.0 builder/requirements.txt) ─────
+RUN python3 -m pip install --no-cache-dir \
+    ray \
+    pandas \
+    pyarrow \
+    runpod \
+    huggingface-hub \
+    packaging \
+    "typing-extensions>=4.8.0" \
+    pydantic \
+    pydantic-settings \
+    hf-transfer \
+    "transformers>=4.57.0" \
+    "bitsandbytes>=0.45.0" \
+    kernels \
+    torch-c-dlpack-ext
+
+# ── Copy the handler ───────────────────────────────────────────────────────
+COPY handler.py /handler.py
+
+# ── Model + engine config via env vars ──────────────────────────────────────
+# The handler reads these at startup.
+ENV MODEL_ID=forbiddenmichael/Qwen3-30B-A3B-abliterated-erotic-AWQ-Int4
 ENV MAX_MODEL_LEN=32768
 ENV GPU_MEMORY_UTILIZATION=0.92
 ENV QUANTIZATION=awq
@@ -12,3 +54,19 @@ ENV DTYPE=half
 ENV ENFORCE_EAGER=1
 ENV KV_CACHE_DTYPE=fp8
 ENV TRUST_REMOTE_CODE=1
+
+# RunPod cache paths (same as official worker)
+ENV BASE_PATH="/runpod-volume"
+ENV HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets"
+ENV HUGGINGFACE_HUB_CACHE="${BASE_PATH}/huggingface-cache/hub"
+ENV HF_HOME="${BASE_PATH}/huggingface-cache/hub"
+ENV HF_HUB_ENABLE_HF_TRANSFER=0
+ENV PYTHONPATH="/"
+
+# Suppress noisy Ray metrics
+ENV RAY_METRICS_EXPORT_ENABLED=0
+ENV RAY_DISABLE_USAGE_STATS=1
+ENV TOKENIZERS_PARALLELISM=false
+ENV RAYON_NUM_THREADS=4
+
+CMD ["python3", "-u", "/handler.py"]
