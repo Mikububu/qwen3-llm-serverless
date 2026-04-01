@@ -108,6 +108,7 @@ def handler(job):
     temperature = params.get("temperature", 0.8)
     top_p = params.get("top_p", 0.95)
     top_k = params.get("top_k", 20)
+    repetition_penalty = params.get("repetition_penalty", 1.15)
     enable_thinking = params.get("enable_thinking", True)
 
     prompt = tokenizer.apply_chat_template(
@@ -120,6 +121,7 @@ def handler(job):
         temperature=temperature,
         top_p=top_p,
         top_k=top_k,
+        repetition_penalty=repetition_penalty,
     )
 
     start = time.time()
