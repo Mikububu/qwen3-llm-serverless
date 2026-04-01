@@ -108,9 +108,11 @@ def handler(job):
     temperature = params.get("temperature", 0.8)
     top_p = params.get("top_p", 0.95)
     top_k = params.get("top_k", 20)
+    enable_thinking = params.get("enable_thinking", False)
 
     prompt = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True,
+        enable_thinking=enable_thinking,
     )
 
     sampling = SamplingParams(
@@ -128,8 +130,9 @@ def handler(job):
     prompt_tokens = len(outputs[0].prompt_token_ids)
     completion_tokens = len(outputs[0].outputs[0].token_ids)
 
-    # Strip <think> reasoning tags
-    clean_text = re.sub(r'<think>[\s\S]*?</think>\s*', '', text).strip()
+    # Strip <think> reasoning tags (including unclosed blocks at end of output)
+    clean_text = re.sub(r'<think>[\s\S]*?</think>\s*', '', text)
+    clean_text = re.sub(r'<think>[\s\S]*$', '', clean_text).strip()
 
     return {
         "id": f"chatcmpl-{job['id'][:16]}",
