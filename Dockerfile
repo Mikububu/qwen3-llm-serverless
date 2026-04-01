@@ -60,6 +60,7 @@ ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 # VLLM_ENABLE_V1_MULTIPROCESSING=0 keeps EngineCore in-process (InprocClient)
 # so no subprocess is spawned and no /dev/shm IPC is needed.
 ENV VLLM_ENABLE_V1_MULTIPROCESSING=0
+ENV VLLM_USE_V1=0
 
 # RunPod cache paths (same as official worker)
 ENV BASE_PATH="/runpod-volume"
