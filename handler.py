@@ -108,7 +108,7 @@ def handler(job):
     temperature = params.get("temperature", 0.8)
     top_p = params.get("top_p", 0.95)
     top_k = params.get("top_k", 20)
-    enable_thinking = params.get("enable_thinking", False)
+    enable_thinking = params.get("enable_thinking", True)
 
     prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
