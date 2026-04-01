@@ -1,15 +1,24 @@
 """
 RunPod Serverless Handler for Qwen3-30B-A3B abliterated-erotic AWQ-Int4
 
-Uses AsyncLLMEngine (not LLM class) — same pattern as the official
-RunPod worker-vllm. AsyncLLMEngine doesn't spawn EngineCore subprocess,
-avoiding /dev/shm issues in Docker containers.
+CRITICAL: Uses synchronous LLM class (not AsyncLLMEngine).
+- AsyncLLMEngine is hardcoded to V1 engine in vLLM >= 0.8 and IGNORES VLLM_USE_V1=0
+- Only the sync LLM class respects VLLM_USE_V1=0, giving us V0 engine
+- V0 engine has no EngineCore subprocess, no /dev/shm requirement
+- Lazy loading: model loads on first request so heartbeat starts first
 """
 import os
 import sys
-import asyncio
+import re
+import time
+import threading
 import traceback
 import multiprocessing
+
+# MUST be set before any vLLM import
+os.environ["VLLM_USE_V1"] = "0"
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+
 import runpod
 from runpod import RunPodLogger
 
@@ -17,30 +26,33 @@ log = RunPodLogger()
 
 # ── Config ─────────────────────────────────────────────────────────────────
 MODEL_ID = os.environ.get("MODEL_ID", "forbiddenmichael/Qwen3-30B-A3B-abliterated-erotic-AWQ-Int4")
-MAX_MODEL_LEN = int(os.environ.get("MAX_MODEL_LEN", "32768"))
+MAX_MODEL_LEN = int(os.environ.get("MAX_MODEL_LEN", "16384"))
 GPU_MEM_UTIL = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.92"))
 QUANTIZATION = os.environ.get("QUANTIZATION", "awq")
 DTYPE = os.environ.get("DTYPE", "half")
 ENFORCE_EAGER = os.environ.get("ENFORCE_EAGER", "1") in ("1", "true", "True")
-KV_CACHE_DTYPE = os.environ.get("KV_CACHE_DTYPE", "fp8")
 TRUST_REMOTE_CODE = os.environ.get("TRUST_REMOTE_CODE", "1") in ("1", "true", "True")
 
-# ── Engine (initialized at startup, NOT lazily) ───────────────────────────
-# AsyncLLMEngine doesn't block — it returns quickly and loads in background.
-# This is how the official RunPod worker does it.
-engine = None
-tokenizer = None
+# ── Lazy engine singleton ───────────────────────────────────────────────────
+_llm = None
+_tokenizer = None
+_load_lock = threading.Lock()
+_load_error = None
 
 
-def _init_engine():
-    global engine, tokenizer
-    from vllm import AsyncLLMEngine
-    from vllm.engine.arg_utils import AsyncEngineArgs
+def _load_engine():
+    """Load model — called once, lazily on first request."""
+    global _llm, _tokenizer, _load_error
+
+    from vllm import LLM
     from transformers import AutoTokenizer
 
-    log.info(f"Initializing AsyncLLMEngine for {MODEL_ID}...")
+    log.info(f"Loading {MODEL_ID} with vLLM V0 engine "
+             f"(quant={QUANTIZATION}, max_len={MAX_MODEL_LEN}, "
+             f"gpu_util={GPU_MEM_UTIL}) ...")
+    start = time.time()
 
-    args = AsyncEngineArgs(
+    _llm = LLM(
         model=MODEL_ID,
         quantization=QUANTIZATION,
         dtype=DTYPE,
@@ -48,29 +60,49 @@ def _init_engine():
         gpu_memory_utilization=GPU_MEM_UTIL,
         enforce_eager=ENFORCE_EAGER,
         trust_remote_code=TRUST_REMOTE_CODE,
-        kv_cache_dtype=KV_CACHE_DTYPE,
     )
+    _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=TRUST_REMOTE_CODE)
 
-    engine = AsyncLLMEngine.from_engine_args(args)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=TRUST_REMOTE_CODE)
-    log.info("AsyncLLMEngine initialized.")
+    elapsed = time.time() - start
+    log.info(f"Model loaded in {elapsed:.1f}s")
 
 
-# ── Handler ────────────────────────────────────────────────────────────────
-async def handler(job):
+def _get_engine():
+    """Return (llm, tokenizer), loading on first call."""
+    global _llm, _tokenizer, _load_error
+    if _llm is not None:
+        return _llm, _tokenizer
+
+    with _load_lock:
+        if _llm is not None:
+            return _llm, _tokenizer
+        if _load_error:
+            raise _load_error
+        try:
+            _load_engine()
+        except Exception as e:
+            _load_error = e
+            raise
+    return _llm, _tokenizer
+
+
+# ── Handler (synchronous — V0 engine, no subprocess) ──────────────────────
+def handler(job):
     from vllm import SamplingParams
-    from vllm.utils import random_uuid
+
+    try:
+        llm, tokenizer = _get_engine()
+    except Exception as e:
+        log.error(f"Engine init failed: {e}\n{traceback.format_exc()}")
+        if "CUDA" in str(e) or "cuda" in str(e):
+            sys.exit(1)
+        return {"error": f"Engine initialization failed: {e}"}
 
     inp = job["input"]
-    if "openai_input" in inp:
-        params = inp["openai_input"]
-    else:
-        params = inp
-
+    params = inp.get("openai_input", inp)
     messages = params.get("messages", [])
     if not messages:
-        yield {"error": "No messages provided"}
-        return
+        return {"error": "No messages provided"}
 
     max_tokens = min(params.get("max_tokens", 4096), 20000)
     temperature = params.get("temperature", 0.8)
@@ -88,49 +120,35 @@ async def handler(job):
         top_k=top_k,
     )
 
-    request_id = random_uuid()
-    results_generator = engine.generate(prompt, sampling, request_id)
+    start = time.time()
+    outputs = llm.generate([prompt], sampling)
+    elapsed = time.time() - start
 
-    full_text = ""
-    prompt_tokens = 0
-    completion_tokens = 0
+    text = outputs[0].outputs[0].text
+    prompt_tokens = len(outputs[0].prompt_token_ids)
+    completion_tokens = len(outputs[0].outputs[0].token_ids)
 
-    async for request_output in results_generator:
-        prompt_tokens = len(request_output.prompt_token_ids)
-        for output in request_output.outputs:
-            full_text = output.text
-            completion_tokens = len(output.token_ids)
+    # Strip <think> reasoning tags
+    clean_text = re.sub(r'<think>[\s\S]*?</think>\s*', '', text).strip()
 
-    # Strip <think> tags
-    import re
-    clean_text = re.sub(r'<think>[\s\S]*?</think>\s*', '', full_text).strip()
-
-    yield {
-        "id": f"chatcmpl-{request_id[:16]}",
+    return {
+        "id": f"chatcmpl-{job['id'][:16]}",
         "object": "chat.completion",
         "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": clean_text},
-            "finish_reason": "stop",
+            "finish_reason": outputs[0].outputs[0].finish_reason or "stop",
         }],
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         },
+        "elapsed_ms": int(elapsed * 1000),
     }
 
 
 # ── Entry point ────────────────────────────────────────────────────────────
 if __name__ == "__main__" or multiprocessing.current_process().name == "MainProcess":
-    try:
-        _init_engine()
-    except Exception as e:
-        log.error(f"Engine init failed: {e}\n{traceback.format_exc()}")
-        sys.exit(1)
-
-    log.info("Starting RunPod serverless worker...")
-    runpod.serverless.start({
-        "handler": handler,
-        "return_aggregate_stream": True,
-    })
+    log.info("Starting RunPod serverless worker (V0 engine, model loads on first request) ...")
+    runpod.serverless.start({"handler": handler})
