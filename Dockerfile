@@ -49,6 +49,18 @@ ENV KV_CACHE_DTYPE=fp8
 ENV TRUST_REMOTE_CODE=1
 ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
+# ── FIX: Prevent EngineCore subprocess crash in Docker ─────────────────────
+# vLLM >=0.8 uses the V1 engine by default, which spawns EngineCore as a
+# separate subprocess communicating via shared-memory IPC (shm_broadcast.py).
+# Docker containers get only 64 MB /dev/shm by default.  On RunPod Serverless
+# we CANNOT pass --ipc=host or --shm-size to the docker run command.
+# The tiny /dev/shm causes shm_broadcast to fail → EngineCore dies →
+#   "Engine core initialization failed. Failed core proc(s): {}"
+#
+# VLLM_ENABLE_V1_MULTIPROCESSING=0 keeps EngineCore in-process (InprocClient)
+# so no subprocess is spawned and no /dev/shm IPC is needed.
+ENV VLLM_ENABLE_V1_MULTIPROCESSING=0
+
 # RunPod cache paths (same as official worker)
 ENV BASE_PATH="/runpod-volume"
 ENV HF_DATASETS_CACHE="${BASE_PATH}/huggingface-cache/datasets"
