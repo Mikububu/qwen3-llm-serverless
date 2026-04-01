@@ -34,7 +34,7 @@ RUN python3 -m pip install --no-cache-dir \
     pydantic \
     pydantic-settings \
     hf-transfer \
-    "transformers>=4.57.0" \
+    "transformers>=4.57.0,<5.0.0" \
     "bitsandbytes>=0.45.0" \
     kernels \
     torch-c-dlpack-ext
@@ -52,6 +52,7 @@ ENV DTYPE=half
 ENV ENFORCE_EAGER=1
 ENV KV_CACHE_DTYPE=fp8
 ENV TRUST_REMOTE_CODE=1
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 # RunPod cache paths (same as official worker)
 ENV BASE_PATH="/runpod-volume"
