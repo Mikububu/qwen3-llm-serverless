@@ -15,7 +15,7 @@ FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
 # ── vLLM 0.18.0 (the whole point) ──────────────────────────────────────────
 # pytorch/pytorch base already has Python, pip, CUDA, cuDNN, PyTorch
-RUN pip install --no-cache-dir "vllm==0.18.0"
+RUN pip install --no-cache-dir "vllm==0.8.5.post1"
 
 # ── Python deps (mirrors worker-vllm v2.14.0 builder/requirements.txt) ─────
 RUN python3 -m pip install --no-cache-dir \
@@ -29,7 +29,7 @@ RUN python3 -m pip install --no-cache-dir \
     pydantic \
     pydantic-settings \
     hf-transfer \
-    "transformers>=4.57.0,<5.0.0" \
+    "transformers>=4.51.0,<5.0.0" \
     "bitsandbytes>=0.45.0" \
     kernels \
     torch-c-dlpack-ext
