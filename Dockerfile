@@ -11,18 +11,16 @@
 #   `runpod.serverless.start()` immediately so the heartbeat fires first.
 # ────────────────────────────────────────────────────────────────────────────
 
-FROM nvidia/cuda:12.9.1-base-ubuntu22.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 # ── System deps ─────────────────────────────────────────────────────────────
 RUN apt-get update -y && \
-    apt-get install -y python3-pip git && \
+    apt-get install -y python3-pip python3-dev git && \
     rm -rf /var/lib/apt/lists/*
-
-RUN ldconfig /usr/local/cuda-12.9/compat/
 
 # ── vLLM 0.18.0 (the whole point) ──────────────────────────────────────────
 RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install "vllm==0.18.0" --extra-index-url https://download.pytorch.org/whl/cu129
+    python3 -m pip install "vllm==0.18.0"
 
 # ── Python deps (mirrors worker-vllm v2.14.0 builder/requirements.txt) ─────
 RUN python3 -m pip install --no-cache-dir \
