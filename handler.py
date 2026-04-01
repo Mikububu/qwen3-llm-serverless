@@ -1,5 +1,5 @@
 """
-RunPod Serverless Handler for Qwen3-30B-A3B abliterated-erotic AWQ-Int4
+RunPod Serverless Handler for uncensored LLM (AWQ-Int4)
 
 CRITICAL: Uses synchronous LLM class (not AsyncLLMEngine).
 - AsyncLLMEngine is hardcoded to V1 engine in vLLM >= 0.8 and IGNORES VLLM_USE_V1=0
@@ -109,11 +109,15 @@ def handler(job):
     top_p = params.get("top_p", 0.95)
     top_k = params.get("top_k", 20)
     repetition_penalty = params.get("repetition_penalty", 1.15)
-    enable_thinking = params.get("enable_thinking", True)
+
+    # Qwen3 supports enable_thinking; Qwen2.5 does not
+    template_kwargs = {}
+    if "qwen3" in MODEL_ID.lower() or "Qwen3" in MODEL_ID:
+        template_kwargs["enable_thinking"] = params.get("enable_thinking", True)
 
     prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
-        enable_thinking=enable_thinking,
+        **template_kwargs,
     )
 
     sampling = SamplingParams(
@@ -132,7 +136,7 @@ def handler(job):
     prompt_tokens = len(outputs[0].prompt_token_ids)
     completion_tokens = len(outputs[0].outputs[0].token_ids)
 
-    # Strip <think> reasoning tags (including unclosed blocks at end of output)
+    # Strip <think> reasoning tags if present (safety net)
     clean_text = re.sub(r'<think>[\s\S]*?</think>\s*', '', text)
     clean_text = re.sub(r'<think>[\s\S]*$', '', clean_text).strip()
 
